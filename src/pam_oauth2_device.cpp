@@ -462,11 +462,16 @@ bool run_provision(const Config &config,
     if (config.provision_exec.empty())
         return true;
 
+    logger.log(pam_oauth2_log::log_level_t::DEBUG,
+               "Provisioning enabled, exec: %s", config.provision_exec.c_str());
+
     if (id_token.empty()) {
         logger.log(pam_oauth2_log::log_level_t::ERR,
                    "Provisioning configured but no id_token received from token endpoint");
         return false;
     }
+
+    logger.log(pam_oauth2_log::log_level_t::DEBUG, "Decoding id_token JWT");
 
     jwt_t *jwt = NULL;
     int ret = jwt_decode(&jwt, id_token.c_str(), NULL, 0);
@@ -477,6 +482,8 @@ bool run_provision(const Config &config,
             jwt_free(jwt);
         return false;
     }
+
+    logger.log(pam_oauth2_log::log_level_t::DEBUG, "id_token JWT decoded successfully");
 
     char *grants = jwt_get_grants_json(jwt, NULL);
     jwt_free(jwt);
@@ -491,7 +498,9 @@ bool run_provision(const Config &config,
     free(grants);
 
     logger.log(pam_oauth2_log::log_level_t::DEBUG,
-               "Running provision script: %s", config.provision_exec.c_str());
+               "JWT payload: %s", payload.c_str());
+    logger.log(pam_oauth2_log::log_level_t::DEBUG,
+               "Forking to run provision script: %s", config.provision_exec.c_str());
 
     pid_t pid = fork();
     if (pid < 0) {
@@ -505,6 +514,9 @@ bool run_provision(const Config &config,
         _exit(127);
     }
 
+    logger.log(pam_oauth2_log::log_level_t::DEBUG,
+               "Provision script running as pid %d, waiting for completion", (int)pid);
+
     int status = 0;
     if (waitpid(pid, &status, 0) < 0) {
         logger.log(pam_oauth2_log::log_level_t::ERR, "waitpid() failed for provision script");
@@ -512,6 +524,8 @@ bool run_provision(const Config &config,
     }
 
     if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+        logger.log(pam_oauth2_log::log_level_t::DEBUG,
+                   "Provision script (pid %d) exited with status 0", (int)pid);
         logger.log(pam_oauth2_log::log_level_t::INFO, "Provision script completed successfully");
         return true;
     }
@@ -521,7 +535,7 @@ bool run_provision(const Config &config,
                    "Provision script exited with status %d", WEXITSTATUS(status));
     } else {
         logger.log(pam_oauth2_log::log_level_t::ERR,
-                   "Provision script terminated abnormally");
+                   "Provision script terminated abnormally (wait status 0x%x)", status);
     }
     return false;
 }
