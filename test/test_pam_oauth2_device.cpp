@@ -39,9 +39,10 @@ TEST(PamTest, Device)
 TEST(PamTest, Token)
 {
     std::string token;
+    std::string id_token;
     poll_for_token(CLIENT_ID, CLIENT_SECRET,
                    TOKEN_ENDPOINT,
-                   DEVICE_CODE, token);
+                   DEVICE_CODE, token, id_token);
     EXPECT_EQ(token, ACCESS_TOKEN);
 }
 

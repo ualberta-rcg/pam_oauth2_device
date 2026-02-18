@@ -35,6 +35,9 @@
         "access": false,
 	"metadata_file": "metadata.json"
     },
+    "provision": {
+	"exec": "/usr/local/bin/provision_user.sh"
+    },
     "users": {
 	"*bypass*":
 	[

@@ -1,7 +1,7 @@
 CXXFLAGS=-Wall -fPIC -std=c++11
 CFLAGS=-Wall -fPIC
 
-LDLIBS=-lpam -lcurl -lldap -llber
+LDLIBS=-lpam -lcurl -lldap -llber -ljwt
 
 objects = src/pam_oauth2_device.o \
 		  src/include/config.o \

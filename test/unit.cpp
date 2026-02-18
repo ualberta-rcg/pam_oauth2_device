@@ -61,7 +61,8 @@ void poll_for_token(Config const &config,
 		    std::string const &client_secret,
 		    std::string const &token_endpoint,
 		    std::string const &device_code,
-		    std::string &token);
+		    std::string &token,
+		    std::string &id_token);
 
 Userinfo get_userinfo(Config const &config,
 		      pam_oauth2_log &logger,

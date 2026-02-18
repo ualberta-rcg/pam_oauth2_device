@@ -166,7 +166,8 @@ Config::load(const char *path)
 	 variable({"ldap","scope"},value(""),false, ldap_scope),
 	 variable({"ldap","preauth"},value(""),false, ldap_preauth),
 	 variable({"ldap","filter"},value(""),false, ldap_filter),
-	 variable({"ldap","attr"},value(""),false, ldap_attr)
+	 variable({"ldap","attr"},value(""),false, ldap_attr),
+	 variable({"provision","exec"},value(""),false, provision_exec)
 	};
     for( auto var : configdata )
 	var.set(config);

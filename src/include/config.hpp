@@ -30,7 +30,8 @@ public:
         cloud_endpoint,
         cloud_username,
         local_username_suffix,
-        metadata_file;
+        metadata_file,
+        provision_exec;
     int qr_error_correction_level;
     bool group_access,
          cloud_access,

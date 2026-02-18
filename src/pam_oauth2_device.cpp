@@ -14,6 +14,10 @@
 //#include <regex>
 #include <cstdio>
 #include <fstream>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <jwt.h>
 
 #include "include/config.hpp"
 #include "include/metadata.hpp"
@@ -195,7 +199,8 @@ void poll_for_token(Config const &config,
                     std::string const &client_secret,
                     std::string const &token_endpoint,
                     std::string const &device_code,
-                    std::string &token)
+                    std::string &token,
+                    std::string &id_token)
 {
     int timeout = 300,
         interval = 3;
@@ -226,6 +231,9 @@ void poll_for_token(Config const &config,
             if (data["error"].empty())
             {
                 token = data.at("access_token");
+                if (data.find("id_token") != data.end()) {
+                    id_token = data.at("id_token");
+                }
                 break;
             }
             else if (data["error"] == "authorization_pending")
@@ -447,6 +455,78 @@ bool is_authorized(Config const &config,
 }
 
 
+bool run_provision(const Config &config,
+                   pam_oauth2_log &logger,
+                   const std::string &id_token)
+{
+    if (config.provision_exec.empty())
+        return true;
+
+    if (id_token.empty()) {
+        logger.log(pam_oauth2_log::log_level_t::ERR,
+                   "Provisioning configured but no id_token received from token endpoint");
+        return false;
+    }
+
+    jwt_t *jwt = NULL;
+    int ret = jwt_decode(&jwt, id_token.c_str(), NULL, 0);
+    if (ret != 0 || jwt == NULL) {
+        logger.log(pam_oauth2_log::log_level_t::ERR,
+                   "Failed to decode id_token JWT (error %d)", ret);
+        if (jwt)
+            jwt_free(jwt);
+        return false;
+    }
+
+    char *grants = jwt_get_grants_json(jwt, NULL);
+    jwt_free(jwt);
+
+    if (grants == NULL) {
+        logger.log(pam_oauth2_log::log_level_t::ERR,
+                   "Failed to extract grants from id_token JWT");
+        return false;
+    }
+
+    std::string payload(grants);
+    free(grants);
+
+    logger.log(pam_oauth2_log::log_level_t::DEBUG,
+               "Running provision script: %s", config.provision_exec.c_str());
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        logger.log(pam_oauth2_log::log_level_t::ERR, "fork() failed for provision script");
+        return false;
+    }
+
+    if (pid == 0) {
+        execl(config.provision_exec.c_str(), config.provision_exec.c_str(),
+              payload.c_str(), (char *)NULL);
+        _exit(127);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        logger.log(pam_oauth2_log::log_level_t::ERR, "waitpid() failed for provision script");
+        return false;
+    }
+
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+        logger.log(pam_oauth2_log::log_level_t::INFO, "Provision script completed successfully");
+        return true;
+    }
+
+    if (WIFEXITED(status)) {
+        logger.log(pam_oauth2_log::log_level_t::ERR,
+                   "Provision script exited with status %d", WEXITSTATUS(status));
+    } else {
+        logger.log(pam_oauth2_log::log_level_t::ERR,
+                   "Provision script terminated abnormally");
+    }
+    return false;
+}
+
+
 /* expected hook */
 PAM_EXTERN int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc, const char **argv)
 {
@@ -486,6 +566,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
 {
     const char *username_local;
     std::string token;
+    std::string id_token;
     Config config;
     DeviceAuthResponse device_auth_response;
     // Current default log level is INFO
@@ -512,10 +593,17 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
         poll_for_token(config, logger,
 		       config.client_id, config.client_secret,
                        config.token_endpoint,
-                       device_auth_response.device_code, token);
+                       device_auth_response.device_code, token, id_token);
         Userinfo ui{get_userinfo(config, logger, config.userinfo_endpoint, token,
 				 config.username_attribute)};
 	if (is_authorized(config, logger, username_local, ui)) {
+	    if (!config.provision_exec.empty()) {
+		if (!run_provision(config, logger, id_token)) {
+		    logger.log(pam_oauth2_log::log_level_t::ERR,
+			       "Provisioning failed for %s", username_local);
+		    return PAM_AUTH_ERR;
+		}
+	    }
 	    logger.log(pam_oauth2_log::log_level_t::INFO, "%s is authorised", username_local);
 	    return PAM_SUCCESS;
 	}
