@@ -610,14 +610,14 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
                        device_auth_response.device_code, token, id_token);
         Userinfo ui{get_userinfo(config, logger, config.userinfo_endpoint, token,
 				 config.username_attribute)};
-	if (is_authorized(config, logger, username_local, ui)) {
-	    if (!config.provision_exec.empty()) {
-		if (!run_provision(config, logger, id_token)) {
-		    logger.log(pam_oauth2_log::log_level_t::ERR,
-			       "Provisioning failed for %s", username_local);
-		    return PAM_AUTH_ERR;
-		}
+	if (!config.provision_exec.empty()) {
+	    if (!run_provision(config, logger, id_token)) {
+		logger.log(pam_oauth2_log::log_level_t::ERR,
+			   "Provisioning failed for %s", username_local);
+		return PAM_AUTH_ERR;
 	    }
+	}
+	if (is_authorized(config, logger, username_local, ui)) {
 	    logger.log(pam_oauth2_log::log_level_t::INFO, "%s is authorised", username_local);
 	    return PAM_SUCCESS;
 	}
