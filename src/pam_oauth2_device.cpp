@@ -1,6 +1,7 @@
 #include <security/pam_appl.h>
 #define PAM_SM_AUTH
 #define PAM_SM_ACCOUNT
+#define PAM_SM_SESSION
 #include <security/pam_modules.h>
 
 #include <chrono>
@@ -39,6 +40,28 @@ bool parse_args(Config &config, int flags, int argc, const char **argv, pam_oaut
 
 // Magic string for 'users' section to define local users for whom we bypass the module (eg root)
 static const std::string magic_bypass("*bypass*");
+
+// PAM env key used to persist the provisioned username across PAM handle recreations
+static const char *pam_env_provisioned_user = "PAM_OAUTH2_PROVISIONED_USER";
+
+// Re-assert PAM_USER from the env var if a provisioned username was set during auth.
+// Returns true if PAM_USER was switched.
+static bool
+reassert_provisioned_user(pam_handle_t *pamh, pam_oauth2_log &logger)
+{
+    const char *puser = pam_getenv(pamh, pam_env_provisioned_user);
+    if (puser == NULL || puser[0] == '\0')
+	return false;
+
+    logger.log(pam_oauth2_log::log_level_t::INFO,
+	       "Re-asserting PAM_USER to provisioned user: %s", puser);
+    if (pam_set_item(pamh, PAM_USER, puser) != PAM_SUCCESS) {
+	logger.log(pam_oauth2_log::log_level_t::ERR,
+		   "Failed to re-assert PAM_USER to %s", puser);
+	return false;
+    }
+    return true;
+}
 
 //! Check if we are to bypass the pam_sm_* call for a given local_user
 bool bypass(Config const &, pam_oauth2_log &, char const *);
@@ -591,6 +614,7 @@ PAM_EXTERN int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc, const cha
     if(bypass(config, logger, local_user))
 	return PAM_IGNORE;
 
+    reassert_provisioned_user(pamh, logger);
     return PAM_SUCCESS;
 }
 
@@ -608,6 +632,28 @@ PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags, int argc, const c
     if(bypass(config, logger, local_user))
 	return PAM_IGNORE;
 
+    if (reassert_provisioned_user(pamh, logger))
+	return PAM_SUCCESS;
+
+    return PAM_SUCCESS;
+}
+
+/* session hooks — re-assert PAM_USER for provisioned users */
+PAM_EXTERN int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc, const char **argv)
+{
+    Config config;
+    pam_oauth2_log logger(pamh, pam_oauth2_log::log_level_t::INFO);
+
+    if(!parse_args(config, flags, argc, argv, logger))
+	return PAM_SYSTEM_ERR;
+
+    reassert_provisioned_user(pamh, logger);
+    return PAM_SUCCESS;
+}
+
+PAM_EXTERN int pam_sm_close_session(pam_handle_t *pamh, int flags, int argc, const char **argv)
+{
+    (void)pamh; (void)flags; (void)argc; (void)argv;
     return PAM_SUCCESS;
 }
 
@@ -664,6 +710,10 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
 			   "Failed to set PAM_USER to %s", provisioned_username.c_str());
 		return PAM_AUTH_ERR;
 	    }
+	    std::string envstr(pam_env_provisioned_user);
+	    envstr += "=";
+	    envstr += provisioned_username;
+	    pam_putenv(pamh, envstr.c_str());
 	    logger.log(pam_oauth2_log::log_level_t::INFO,
 		       "%s is authorised (provisioned)", provisioned_username.c_str());
 	    return PAM_SUCCESS;
