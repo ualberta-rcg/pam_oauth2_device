@@ -457,8 +457,11 @@ bool is_authorized(Config const &config,
 
 bool run_provision(const Config &config,
                    pam_oauth2_log &logger,
-                   const std::string &id_token)
+                   const std::string &id_token,
+                   std::string &provisioned_username)
 {
+    provisioned_username.clear();
+
     if (config.provision_exec.empty())
         return true;
 
@@ -502,17 +505,39 @@ bool run_provision(const Config &config,
     logger.log(pam_oauth2_log::log_level_t::DEBUG,
                "Forking to run provision script: %s", config.provision_exec.c_str());
 
+    int pipefd[2];
+    if (pipe(pipefd) < 0) {
+        logger.log(pam_oauth2_log::log_level_t::ERR, "pipe() failed for provision script");
+        return false;
+    }
+
     pid_t pid = fork();
     if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
         logger.log(pam_oauth2_log::log_level_t::ERR, "fork() failed for provision script");
         return false;
     }
 
     if (pid == 0) {
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        close(pipefd[1]);
         execl(config.provision_exec.c_str(), config.provision_exec.c_str(),
               payload.c_str(), (char *)NULL);
         _exit(127);
     }
+
+    close(pipefd[1]);
+
+    char buf[256];
+    std::string captured;
+    ssize_t n;
+    while ((n = read(pipefd[0], buf, sizeof(buf) - 1)) > 0) {
+        buf[n] = '\0';
+        captured += buf;
+    }
+    close(pipefd[0]);
 
     logger.log(pam_oauth2_log::log_level_t::DEBUG,
                "Provision script running as pid %d, waiting for completion", (int)pid);
@@ -527,6 +552,17 @@ bool run_provision(const Config &config,
         logger.log(pam_oauth2_log::log_level_t::DEBUG,
                    "Provision script (pid %d) exited with status 0", (int)pid);
         logger.log(pam_oauth2_log::log_level_t::INFO, "Provision script completed successfully");
+
+        // Trim whitespace/newlines from captured stdout
+        size_t start = captured.find_first_not_of(" \t\r\n");
+        size_t end = captured.find_last_not_of(" \t\r\n");
+        if (start != std::string::npos)
+            provisioned_username = captured.substr(start, end - start + 1);
+
+        if (!provisioned_username.empty())
+            logger.log(pam_oauth2_log::log_level_t::INFO,
+                       "Provision script returned username: %s", provisioned_username.c_str());
+
         return true;
     }
 
@@ -610,13 +646,29 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
                        device_auth_response.device_code, token, id_token);
         Userinfo ui{get_userinfo(config, logger, config.userinfo_endpoint, token,
 				 config.username_attribute)};
+	std::string provisioned_username;
 	if (!config.provision_exec.empty()) {
-	    if (!run_provision(config, logger, id_token)) {
+	    if (!run_provision(config, logger, id_token, provisioned_username)) {
 		logger.log(pam_oauth2_log::log_level_t::ERR,
 			   "Provisioning failed for %s", username_local);
 		return PAM_AUTH_ERR;
 	    }
 	}
+
+	if (!provisioned_username.empty()) {
+	    logger.log(pam_oauth2_log::log_level_t::INFO,
+		       "Switching PAM user from %s to %s",
+		       username_local, provisioned_username.c_str());
+	    if (pam_set_item(pamh, PAM_USER, provisioned_username.c_str()) != PAM_SUCCESS) {
+		logger.log(pam_oauth2_log::log_level_t::ERR,
+			   "Failed to set PAM_USER to %s", provisioned_username.c_str());
+		return PAM_AUTH_ERR;
+	    }
+	    logger.log(pam_oauth2_log::log_level_t::INFO,
+		       "%s is authorised (provisioned)", provisioned_username.c_str());
+	    return PAM_SUCCESS;
+	}
+
 	if (is_authorized(config, logger, username_local, ui)) {
 	    logger.log(pam_oauth2_log::log_level_t::INFO, "%s is authorised", username_local);
 	    return PAM_SUCCESS;
