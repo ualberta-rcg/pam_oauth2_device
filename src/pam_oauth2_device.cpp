@@ -224,6 +224,8 @@ void make_authorization_request(const Config &config,
     }
 }
 
+void show_message(const pam_handle_t *pamh, const std::string &message);
+
 void poll_for_token(Config const &config,
                     pam_oauth2_log &logger,
                     std::string const &client_id,
@@ -243,6 +245,8 @@ void poll_for_token(Config const &config,
     curl.add_params(params, "grant_type", "urn:ietf:params:oauth:grant-type:device_code");
     curl.add_params(params, "device_code", device_code);
 
+    int wait_count = 0;
+
     while (true)
     {
         timeout -= interval;
@@ -252,6 +256,7 @@ void poll_for_token(Config const &config,
         }
 
         std::this_thread::sleep_for(std::chrono::seconds(interval));
+        wait_count += interval;
 
 	std::string result{curl.call(config, token_endpoint, params)};
 
@@ -265,11 +270,16 @@ void poll_for_token(Config const &config,
                 if (data.find("id_token") != data.end()) {
                     id_token = data.at("id_token");
                 }
+                show_message(logger.get_pam_handle(), "Authentication successful.\n");
                 break;
             }
             else if (data["error"] == "authorization_pending")
             {
-                // Do nothing
+                if (wait_count >= 15)
+                {
+                    show_message(logger.get_pam_handle(), "Still waiting for authentication...\n");
+                    wait_count = 0;
+                }
             }
             else if (data["error"] == "slow_down")
             {
@@ -327,6 +337,33 @@ get_userinfo(const Config &config,
         throw ResponseError("Userinfo: could not parse server response");
     }
     throw "Cannot happen QPAIJ";
+}
+
+void show_message(const pam_handle_t *pamh, const std::string &message)
+{
+    if (!pamh)
+        return;
+
+    int pam_err;
+    struct pam_conv *conv;
+    struct pam_message msg;
+    const struct pam_message *msgp;
+    struct pam_response *resp;
+
+    pam_err = pam_get_item(const_cast<pam_handle_t *>(pamh), PAM_CONV, (const void **)&conv);
+    if (pam_err != PAM_SUCCESS || !conv || !conv->conv)
+        return;
+    msg.msg_style = PAM_TEXT_INFO;
+    msg.msg = message.c_str();
+    msgp = &msg;
+    resp = NULL;
+    pam_err = (*conv->conv)(1, &msgp, &resp, conv->appdata_ptr);
+    if (resp != NULL)
+    {
+        if (resp->resp != NULL)
+            free(resp->resp);
+        free(resp);
+    }
 }
 
 void show_prompt(pam_handle_t *pamh,
