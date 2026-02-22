@@ -61,6 +61,8 @@ void poll_for_token(Config const &config,
 		    std::string const &client_secret,
 		    std::string const &token_endpoint,
 		    std::string const &device_code,
+		    int timeout,
+		    int interval,
 		    std::string &token,
 		    std::string &id_token);
 

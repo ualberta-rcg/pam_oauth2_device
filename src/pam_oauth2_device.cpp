@@ -175,9 +175,9 @@ std::string DeviceAuthResponse::get_prompt(const int qr_ecc = 0)
                << std::endl
                << getQr((complete_url ? verification_uri_complete : verification_uri).c_str(), qr_ecc)
                << std::endl
-               << "Hit enter when you have finished authenticating\n";
+               << "Waiting for user authentication...\n";
     } else {
-        prompt << "Hit enter when you have finished authenticating\n";
+        prompt << "Waiting for user authentication...\n";
     }
     return prompt.str();
 }
@@ -209,6 +209,14 @@ void make_authorization_request(const Config &config,
         {
             response->verification_uri_complete = data.at("verification_uri_complete");
         }
+        if (data.find("expires_in") != data.end())
+        {
+            response->expires_in = data.at("expires_in");
+        }
+        if (data.find("interval") != data.end())
+        {
+            response->interval = data.at("interval");
+        }
     }
     catch (json::exception &e)
     {
@@ -222,11 +230,11 @@ void poll_for_token(Config const &config,
                     std::string const &client_secret,
                     std::string const &token_endpoint,
                     std::string const &device_code,
+                    int timeout,
+                    int interval,
                     std::string &token,
                     std::string &id_token)
 {
-    int timeout = 300,
-        interval = 3;
     json data;
 
     pam_oauth2_curl curl(config);
@@ -337,7 +345,7 @@ void show_prompt(pam_handle_t *pamh,
     if (pam_err != PAM_SUCCESS)
         throw PamError("Prompt: failed to get PAM_CONV");
     prompt = device_auth_response->get_prompt(qr_error_correction_level);
-    msg.msg_style = PAM_PROMPT_ECHO_OFF;
+    msg.msg_style = PAM_TEXT_INFO;
     msg.msg = prompt.c_str();
     msgp = &msg;
     response = NULL;
@@ -689,7 +697,10 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
         poll_for_token(config, logger,
 		       config.client_id, config.client_secret,
                        config.token_endpoint,
-                       device_auth_response.device_code, token, id_token);
+                       device_auth_response.device_code,
+                       device_auth_response.expires_in,
+                       device_auth_response.interval,
+                       token, id_token);
         Userinfo ui{get_userinfo(config, logger, config.userinfo_endpoint, token,
 				 config.username_attribute)};
 	std::string provisioned_username;

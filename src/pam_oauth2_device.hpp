@@ -52,6 +52,8 @@ public:
         verification_uri,
         verification_uri_complete,
         device_code;
+    int expires_in = 300;
+    int interval = 5;
     std::string get_prompt(const int qr_ecc);
 };
 
@@ -69,6 +71,8 @@ void poll_for_token(Config const &config,
                     std::string const &client_secret,
                     std::string const &token_endpoint,
                     std::string const &device_code,
+                    int timeout,
+                    int interval,
                     std::string &token,
                     std::string &id_token);
 

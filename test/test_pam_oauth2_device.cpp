@@ -40,9 +40,11 @@ TEST(PamTest, Token)
 {
     std::string token;
     std::string id_token;
-    poll_for_token(CLIENT_ID, CLIENT_SECRET,
+    Config config;
+    pam_oauth2_log logger;
+    poll_for_token(config, logger, CLIENT_ID, CLIENT_SECRET,
                    TOKEN_ENDPOINT,
-                   DEVICE_CODE, token, id_token);
+                   DEVICE_CODE, 300, 3, token, id_token);
     EXPECT_EQ(token, ACCESS_TOKEN);
 }
 
