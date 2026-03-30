@@ -227,3 +227,4 @@ fabric.properties
 
 # Google C++ test library
 googletest*
+deviceflow.sh

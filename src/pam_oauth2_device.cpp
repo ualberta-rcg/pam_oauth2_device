@@ -15,6 +15,8 @@
 //#include <regex>
 #include <cstdio>
 #include <fstream>
+#include <pwd.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -750,6 +752,39 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
 	}
 
 	if (!provisioned_username.empty()) {
+	    if (provisioned_username != username_local) {
+		struct passwd *pw = getpwnam(username_local);
+		bool is_real_user = false;
+		if (pw != NULL && pw->pw_dir != NULL) {
+		    struct stat st;
+		    is_real_user = (stat(pw->pw_dir, &st) == 0
+				    && S_ISDIR(st.st_mode));
+		}
+
+		if (is_real_user) {
+		    logger.log(pam_oauth2_log::log_level_t::ERR,
+			       "Identity mismatch: authenticated as %s "
+			       "but login was requested as %s (a real account) "
+			       "— denying",
+			       provisioned_username.c_str(), username_local);
+		    std::ostringstream deny_msg;
+		    deny_msg << "\n*** Login denied ***\n"
+			     << "Your account username is: "
+			     << provisioned_username << "\n"
+			     << "You attempted to log in as: "
+			     << username_local << "\n"
+			     << "Please reconnect with:  ssh "
+			     << provisioned_username << "@<hostname>\n";
+		    show_message(pamh, deny_msg.str());
+		    return PAM_AUTH_ERR;
+		}
+
+		logger.log(pam_oauth2_log::log_level_t::INFO,
+			   "Login username %s has no backing account, "
+			   "allowing switch to %s",
+			   username_local, provisioned_username.c_str());
+	    }
+
 	    logger.log(pam_oauth2_log::log_level_t::INFO,
 		       "Switching PAM user from %s to %s",
 		       username_local, provisioned_username.c_str());
